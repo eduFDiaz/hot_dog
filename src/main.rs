@@ -1,9 +1,23 @@
 use dioxus::{logger::tracing, prelude::*};
+use crate::dioxus_fullstack::Json;
+use serde::*;
 
 static CSS: Asset = asset!("/assets/main.css");
 
 fn main() {
+    #[cfg(not(feature = "server"))]
     dioxus::launch(App);
+
+    #[cfg(feature = "server")]
+    dioxus::serve(|| async move {
+        // Create a new axum router for our Dioxus app
+        let router = dioxus::server::router(App);
+
+        // .. customize it however you want ..
+
+        // And then return it
+        Ok(router)
+    })
 }
 
 #[component]
@@ -24,36 +38,72 @@ fn Title() -> Element {
     }
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Serialize, Deserialize)]
+struct SaveDogArgs {
+    image: String,
+}
+
+#[post("/api/save_dog")]
+async fn save_dog(Json(args): Json<SaveDogArgs>) -> Result<()> {
+    tracing::info!("Received image to save: {}", args.image);
+
+    use std::io::Write;
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .append(true)
+        .create(true)
+        .open("dogs.txt")
+        .unwrap();
+
+    // And then write a newline to it with the image url
+    file.write_fmt(format_args!("{}\n", args.image));
+
+    Ok(())
+}
+
+#[derive(Deserialize)]
 struct DogApi {
     message: String,
 }
 
 #[component]
 fn DogView() -> Element {
-    let mut img_src = use_signal(|| "".to_string());
-    let skip =  move |_| async move  { 
-        tracing::info!("Skip button clicked");
-        let response = reqwest::get("https://dog.ceo/api/breeds/image/random")
+    let mut img_src = use_resource(|| async move {
+        reqwest::get("https://dog.ceo/api/breeds/image/random")
             .await
             .unwrap()
             .json::<DogApi>()
             .await
-            .unwrap();
-
-        img_src.set(response.message);
-    };
-    let save =  move |_| async move  {
-        tracing::info!("Save button clicked {img_src}");
-    };
+            .unwrap()
+            .message
+    });
+    async fn save_dog(image: String) -> Result<()> {
+    reqwest::Client::new()
+        .post("http://localhost:8080/api/save_dog")
+        .json(&SaveDogArgs { image })
+        .send()
+        .await?;
+    Ok(())
+}
 
     rsx! {
         div { id: "dogview",
-            img { src: "{img_src}" }
+            img { src: img_src.cloned().unwrap_or_default() }
         }
+        
         div { id: "buttons",
-            button { onclick: skip, id: "skip",  "skip" }
-            button { onclick: save, id: "save",  "save!" }
+            button { onclick: move |_| img_src.restart(), id: "skip", "skip" }
+            button {
+                onclick: move |_| async move {
+                    let current = img_src.cloned().unwrap();
+                    img_src.restart();
+                    _ = save_dog(current).await;
+                },
+                id: "save",
+                "save!"
+            }
         }
+
     }
 }

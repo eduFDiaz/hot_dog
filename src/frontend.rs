@@ -1,23 +1,54 @@
 use dioxus::prelude::*;
 use serde::Deserialize;
-use crate::backend::save_dog;
+use crate::backend::{save_dog, delete_dog};
 
 static CSS: Asset = asset!("/assets/main.css");
+
+#[derive(Routable, Clone, PartialEq)]
+enum Route {
+    #[layout(NavBar)]
+    #[route("/")]
+    DogView,
+    #[route("/favorites")]
+    Favorites,
+    #[route("/:..segments")]
+    PageNotFound { segments: Vec<String> },
+}
 
 #[component]
 pub fn App() -> Element {
     rsx! {
         document::Stylesheet { href: CSS }
-        Title {}
-        DogView {}
+        Router::<Route> {}
     }
 }
 
 #[component]
-fn Title() -> Element {
+pub fn NavBar() -> Element {
     rsx! {
         div { id: "title",
-            h1 { "HotDog! 🌭" }
+            Link { to: Route::DogView,
+                h1 { "🌭 HotDog! " }
+            },
+            Link { to: Route::Favorites,
+                h2 { "♥️ Favorites" }
+            }
+        }
+        Outlet::<Route> {}
+    }
+}
+
+#[component]
+fn PageNotFound(segments: Vec<String>) -> Element {
+    rsx! {
+        div { id: "not-found",
+            h2 { "404 - Page Not Found" }
+            p { "The requested path was not found: " }
+            // ul {
+            //     segments.iter().map(|segment| rsx! {
+            //         li { "{segment}" }
+            //     })
+            // }
         }
     }
 }
@@ -25,6 +56,36 @@ fn Title() -> Element {
 #[derive(Deserialize, Clone)]
 struct DogApi {
     message: String,
+}
+
+#[component]
+fn Favorites() -> Element {
+    let mut favorites = use_resource(super::backend::list_dogs);
+    let dogs = favorites.suspend()?;
+
+    rsx! {
+            div { id: "favorites",
+                div { id: "favorites-container",
+                    for (id, url) in dogs().unwrap() {
+                        // Render a div for each photo using the dog's ID as the list key
+                        div {
+                            key: "{id}",
+                            class: "favorite-dog",
+                            img { src: "{url}" }
+                            button {
+                                onclick: move |_| async move {
+                                    let _ = delete_dog(id).await;
+                                    // Refresh the favorites list after deletion
+                                    favorites.restart();
+                                },
+                                "❌"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
 }
 
 #[component]
